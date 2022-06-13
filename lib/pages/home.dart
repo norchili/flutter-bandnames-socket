@@ -1,8 +1,12 @@
 import 'dart:io';
 
 import 'package:band_names/models/band.dart';
+import 'package:band_names/services/socket_service.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:pie_chart/pie_chart.dart';
+import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -23,7 +27,28 @@ class _HomePageState extends State<HomePage> {
   ];
 
   @override
+  void initState() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+    socketService.socket.on('activeBands', _handleActiveBands);
+    super.initState();
+  }
+
+  _handleActiveBands(dynamic payload) {
+    bands = (payload as List).map((band) => Band.fromMap(band)).toList();
+    setState(() {});
+  }
+
+  //al destruir pantalla dejar de escuchar al socket y al evento
+  @override
+  void dispose() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+    socketService.socket.off('activeBands');
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final socketService = Provider.of<SocketService>(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -32,24 +57,42 @@ class _HomePageState extends State<HomePage> {
         ),
         backgroundColor: Colors.white,
         elevation: 1,
+        actions: <Widget>[
+          Container(
+            margin: const EdgeInsets.only(right: 10.0),
+            child: socketService.serverStatus == ServerStatus.online
+                ? Icon(
+                    Icons.check_circle,
+                    color: Colors.blue[300],
+                  )
+                : const Icon(
+                    Icons.offline_bolt,
+                    color: Colors.red,
+                  ),
+          )
+        ],
       ),
-      body: ListView.builder(
-        itemCount: bands.length,
-        itemBuilder: (context, i) => _bandTile(bands[i]),
-      ),
+      body: Column(children: <Widget>[
+        _showGraph(),
+        Expanded(
+            child: ListView.builder(
+          itemCount: bands.length,
+          itemBuilder: (context, i) => _bandTile(bands[i]),
+        ))
+      ]),
       floatingActionButton: FloatingActionButton(
           child: const Icon(Icons.add), elevation: 1, onPressed: addNewBand),
     );
   }
 
   Widget _bandTile(Band band) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
     return Dismissible(
       key: Key(band.id),
       direction: DismissDirection.startToEnd,
       onDismissed: (direction) {
-        print('$direction');
         print('id: ${band.id}');
-        // TODO: llamar el borrado en el server
+        socketService.socket.emit('delete-band', {'id': band.id});
       },
       background: Container(
         padding: const EdgeInsets.only(left: 8.0),
@@ -73,7 +116,9 @@ class _HomePageState extends State<HomePage> {
           style: const TextStyle(fontSize: 20),
         ),
         onTap: () {
+          socketService.socket.emit('vote-band', {'id': band.id});
           print(band.name);
+          print(band.id);
         },
       ),
     );
@@ -129,13 +174,31 @@ class _HomePageState extends State<HomePage> {
   }
 
   void addBandToList(String name) {
-    print(name);
+    final socketService = Provider.of<SocketService>(context, listen: false);
     if (name.length > 1) {
-      //Se pude guardar nombre
-      bands.add(Band(id: DateTime.now().toString(), name: name, votes: 0));
-      setState(() {});
+      socketService.socket.emit('add-band', {'name': name});
+      print(name);
     }
 
     Navigator.pop(context);
+  }
+
+  Widget _showGraph() {
+    Map<String, double> dataMap = {};
+    bands.forEach((band) {
+      dataMap.putIfAbsent(band.name, () => band.votes.toDouble());
+    });
+
+    return Container(
+      padding: const EdgeInsets.only(top: 10.0),
+      width: double.infinity,
+      height: 200,
+      child: PieChart(
+        dataMap: dataMap,
+        chartType: ChartType.ring,
+        chartValuesOptions: const ChartValuesOptions(
+            showChartValuesInPercentage: true, decimalPlaces: 0),
+      ),
+    );
   }
 }
